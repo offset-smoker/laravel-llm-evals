@@ -66,9 +66,12 @@ your own requirements. It is not a guarantee about your deployment.
   response for any case that errors, so an outage cannot erase a good
   recording.
 - **JSON Schema references.** Any `$ref`, `$dynamicRef` or `$recursiveRef`
-  that does not start with `#`, anywhere in the schema, is rejected when the
-  dataset loads. Nothing is resolved over the network or from the
-  filesystem.
+  that does not start with `#`, anywhere in the schema and under any keyword,
+  is rejected when the dataset loads. So is an `$id` below the root schema,
+  because it would change what a local reference points at. The validator's
+  non-standard extension keywords (`$filters`, `$slots`, `$inject`, `$data`
+  and the like) are turned off. Nothing is resolved over the network or from
+  the filesystem.
 - **Regular expressions** come from your own dataset files. A pattern that
   hits PCRE's backtracking limit fails its case rather than hanging the run.
   Do not load datasets from people you do not trust.

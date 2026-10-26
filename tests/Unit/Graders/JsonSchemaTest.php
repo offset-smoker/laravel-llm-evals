@@ -57,7 +57,36 @@ it('rejects a non-local reference anywhere in the schema when it is built', func
     'nested file' => [['type' => 'object', 'properties' => ['a' => ['$ref' => 'file:///etc/passwd']]], '#/properties/a;'],
     'inside allOf' => [['allOf' => [['type' => 'object'], ['$ref' => 'other.json']]], '#/allOf/1;'],
     'under $defs' => [['$defs' => ['x' => ['items' => ['$ref' => 'https://example.org/s.json']]]], '#/$defs/x/items;'],
+    'under draft-07 dependencies' => [['dependencies' => ['a' => ['$ref' => 'file:///etc/hosts']]], '#/dependencies/a;'],
+    'under dependencies, over http' => [['dependencies' => ['a' => ['$ref' => 'http://127.0.0.1:9/x.json']]], '#/dependencies/a;'],
+    'under a keyword the walker does not know' => [['x-vendor' => ['nested' => ['$ref' => 'file:///etc/hosts']]], '#/x-vendor/nested;'],
 ]);
+
+it('keeps the string-list form of draft-07 dependencies', function (): void {
+    $grader = new JsonSchema(['type' => 'object', 'dependencies' => ['a' => ['b'], 'c' => ['required' => ['d']]]]);
+
+    expect($grader->grade(reply('{"a": 1, "b": 2, "c": 3, "d": 4}'), evalCase())->passed)->toBeTrue()
+        ->and($grader->grade(reply('{"a": 1}'), evalCase())->passed)->toBeFalse()
+        ->and($grader->grade(reply('{"c": 1}'), evalCase())->passed)->toBeFalse();
+});
+
+it('rejects an $id below the root, which would re-base local references', function (): void {
+    new JsonSchema(['$defs' => ['n' => ['type' => 'integer']], 'properties' => ['x' => ['$id' => 'http://127.0.0.1:9/x.json', 'properties' => ['y' => ['$ref' => '#/$defs/n']]]]]);
+})->throws(InvalidArgumentException::class, 'uses $id at #/properties/x;');
+
+it('allows an $id at the root, where local references still resolve', function (): void {
+    $grader = new JsonSchema(['$id' => 'https://example.org/notice.schema.json', '$defs' => ['n' => ['type' => 'integer']], 'type' => 'object', 'properties' => ['x' => ['$ref' => '#/$defs/n']]]);
+
+    expect($grader->grade(reply('{"x": 1}'), evalCase())->passed)->toBeTrue()
+        ->and($grader->grade(reply('{"x": "one"}'), evalCase())->passed)->toBeFalse();
+});
+
+it('does not honour the validator\'s non-standard extension keywords', function (): void {
+    // With Opis extensions on, $filters calls a registered PHP function; an unknown one makes the schema unusable.
+    $grader = new JsonSchema(['type' => 'string', '$filters' => ['$func' => 'not-registered']]);
+
+    expect($grader->grade(reply('"text"'), evalCase())->passed)->toBeTrue();
+});
 
 it('allows local references', function (): void {
     $grader = new JsonSchema(['$defs' => ['date' => ['type' => 'string', 'pattern' => 'March']], 'type' => 'object', 'properties' => ['date' => ['$ref' => '#/$defs/date']]]);

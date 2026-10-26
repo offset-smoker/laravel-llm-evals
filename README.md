@@ -195,7 +195,7 @@ sources of this case`, `schema violations: pattern at #/properties/date`.
 | `not_contains` | same as `contains` | the output does not contain the text |
 | `regex` | `"/pattern/flags"` | the PCRE pattern matches |
 | `not_regex` | `"/pattern/flags"` | the pattern does not match |
-| `json_schema` | a JSON Schema object | the output is JSON valid against the schema; one Markdown code fence around it is allowed. Only local `$ref`s (`#/...`) are accepted |
+| `json_schema` | a JSON Schema object | the output is JSON valid against the schema; one Markdown code fence around it is allowed. Only local `$ref`s (`#/...`) are accepted, `$id` only at the root, and the validator's non-standard extension keywords are off |
 | `citations` | `true` or `{min, all, pattern}` | at least `min` (default 1) of the case's `sources` are cited, no cited id is outside them, and with `all` every source is cited. Citations look like `[notice-101]`; `pattern` takes a PCRE with a named `(?<id>...)` group |
 | `refusal` | `true`, `false` or `{expected, phrases}` | the output refuses (or answers) as expected. A `refusal` stop reason from the provider counts as a refusal |
 | `reading_level` | a number or `{max_grade}` | the Flesch-Kincaid grade level is at or below the number |

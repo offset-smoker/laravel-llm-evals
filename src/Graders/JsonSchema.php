@@ -10,6 +10,9 @@ use OffsetSmoker\LlmEvals\Dataset\EvalCase;
 use OffsetSmoker\LlmEvals\Drivers\Response;
 use Opis\JsonSchema\Errors\ValidationError;
 use Opis\JsonSchema\Exceptions\SchemaException;
+use Opis\JsonSchema\Parsers\SchemaParser;
+use Opis\JsonSchema\Resolvers\SchemaResolver;
+use Opis\JsonSchema\SchemaLoader;
 use Opis\JsonSchema\Validator;
 use stdClass;
 
@@ -20,13 +23,16 @@ use stdClass;
  *
  * Only local references (`#/...`) are allowed, and they are checked when the
  * grader is built, so no reference is ever resolved over the network or from
- * the filesystem. Failure reasons name the violated keyword and where it sits
- * in the schema, never a value or key from the response.
+ * the filesystem. An `$id` is allowed only at the root, since a nested one
+ * changes what a local reference points at, and the validator's non-standard
+ * extension keywords (`$filters`, `$slots`, `$inject`, `$data` and so on) are
+ * turned off. Failure reasons name the violated keyword and where it sits in
+ * the schema, never a value or key from the response.
  */
 final readonly class JsonSchema implements Grader
 {
-    /** Keywords whose value is a map of names to schemas. */
-    private const array SCHEMA_MAPS = ['properties', 'patternProperties', '$defs', 'definitions', 'dependentSchemas'];
+    /** Keywords whose value is a map of names to schemas (draft-07 `dependencies` values may also be lists of names). */
+    private const array SCHEMA_MAPS = ['properties', 'patternProperties', '$defs', 'definitions', 'dependentSchemas', 'dependencies'];
 
     /** Keywords whose value is one schema (or, for `items` in older drafts, a list of schemas). */
     private const array SCHEMAS = [
@@ -40,6 +46,17 @@ final readonly class JsonSchema implements Grader
     /** Keywords that point at another schema. */
     private const array REFERENCES = ['$ref', '$dynamicRef', '$recursiveRef'];
 
+    /** Opis extensions beyond standard JSON Schema; several carry references or call PHP functions of their own. */
+    private const array EXTENSIONS_OFF = [
+        'allowFilters' => false,
+        'allowMappers' => false,
+        'allowTemplates' => false,
+        'allowGlobals' => false,
+        'allowSlots' => false,
+        'allowPragmas' => false,
+        'allowDataKeyword' => false,
+    ];
+
     private stdClass $schema;
 
     /**
@@ -47,6 +64,7 @@ final readonly class JsonSchema implements Grader
      */
     public function __construct(array $schema)
     {
+        self::rejectExternalReferences($schema, '#');
         $object = self::schema($schema, '#');
 
         if (! $object instanceof stdClass) {
@@ -54,7 +72,7 @@ final readonly class JsonSchema implements Grader
         }
 
         try {
-            (new Validator())->validate(new stdClass(), $object);
+            self::validator()->validate(new stdClass(), $object);
         } catch (SchemaException $e) {
             throw new InvalidArgumentException("is not a usable JSON Schema ({$e->getMessage()}).");
         }
@@ -82,7 +100,7 @@ final readonly class JsonSchema implements Grader
         }
 
         try {
-            $error = (new Validator())->validate($data, $this->schema)->error();
+            $error = self::validator()->validate($data, $this->schema)->error();
         } catch (SchemaException $e) {
             return Grade::fail("the schema could not be applied ({$e->getMessage()})");
         }
@@ -94,6 +112,32 @@ final readonly class JsonSchema implements Grader
         $violations = array_values(array_unique(self::violations($error)));
 
         return Grade::fail('schema violations: ' . implode('; ', array_slice($violations, 0, 5)));
+    }
+
+    private static function validator(): Validator
+    {
+        return new Validator(new SchemaLoader(new SchemaParser([], self::EXTENSIONS_OFF), new SchemaResolver(), true));
+    }
+
+    /**
+     * Rejects a reference to anything outside the schema wherever it appears,
+     * whatever keyword it sits under, so the check does not depend on knowing
+     * every keyword that holds a sub-schema. (A non-string `$ref` in schema
+     * position is rejected while the schema is converted.)
+     */
+    private static function rejectExternalReferences(mixed $value, string $at): void
+    {
+        if (! is_array($value)) {
+            return;
+        }
+
+        foreach ($value as $key => $item) {
+            if (in_array($key, self::REFERENCES, true) && is_string($item) && ! str_starts_with($item, '#')) {
+                throw new InvalidArgumentException("uses a non-local {$key} at {$at}; only references inside the schema (\"#/...\") are allowed.");
+            }
+
+            self::rejectExternalReferences($item, "{$at}/{$key}");
+        }
     }
 
     /**
@@ -144,6 +188,10 @@ final readonly class JsonSchema implements Grader
 
             if (in_array($key, self::REFERENCES, true) && (! is_string($item) || ! str_starts_with($item, '#'))) {
                 throw new InvalidArgumentException("uses a non-local {$key} at {$at}; only references inside the schema (\"#/...\") are allowed.");
+            }
+
+            if ($key === '$id' && $at !== '#') {
+                throw new InvalidArgumentException("uses \$id at {$at}; only the root schema may set one, because a nested \$id changes what local references (\"#/...\") point at.");
             }
 
             $object->{$key} = match (true) {
