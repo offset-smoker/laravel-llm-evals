@@ -281,16 +281,6 @@ it('merges the package config and publishes it', function (): void {
     unlink(config_path('llm-evals.php'));
 });
 
-it('exits 3 rather than 1 when a recording cannot be written', function (): void {
-    useExampleDatasets();
-    config()->set('llm-evals.recordings_path', '/dev/null/recordings');
-    registerSubject(static fn(): string => 'Elm Street');
-
-    [$exitCode, $output] = runEvals(['--driver' => 'subject', '--record' => true]);
-
-    expect($exitCode)->toBe(3)->and($output)->toContain('Could not create the recordings directory');
-});
-
 it('exits 3 when the JSON report cannot be written', function (): void {
     $directory = useExampleDatasets();
     mkdir("{$directory}/report.json");
@@ -348,4 +338,87 @@ it('turns any exception from the subject into a failed case without its message'
         ->and($output)->toContain('The driver threw LogicException at RunEvalsCommandTest.php:')
         ->and($output)->not->toContain('leaking')
         ->and($output)->toContain('1 dataset run, exit code 1.');
+});
+
+it('checks the existing recording before a --record run calls the subject', function (): void {
+    $directory = useExampleDatasets();
+    $file = "{$directory}/recordings/plain-language-notices.json";
+    file_put_contents($file, str_replace('"dataset": "plain-language-notices"', '"dataset": "renamed"', (string) file_get_contents($file)));
+    $before = (string) file_get_contents($file);
+
+    $called = false;
+    registerSubject(static function () use (&$called): string {
+        $called = true;
+
+        return 'Elm Street';
+    });
+
+    [$exitCode, $output] = runEvals(['--driver' => 'subject', '--record' => true]);
+
+    expect($exitCode)->toBe(3)
+        ->and($called)->toBeFalse()
+        ->and($output)->toContain('dataset must be "plain-language-notices"')
+        ->and((string) file_get_contents($file))->toBe($before);
+});
+
+it('checks that --record can write before it calls the subject', function (): void {
+    useExampleDatasets();
+    config()->set('llm-evals.recordings_path', '/dev/null/recordings');
+
+    $called = false;
+    registerSubject(static function () use (&$called): string {
+        $called = true;
+
+        return 'Elm Street';
+    });
+
+    [$exitCode, $output] = runEvals(['--driver' => 'subject', '--record' => true]);
+
+    expect($exitCode)->toBe(3)->and($called)->toBeFalse()->and($output)->toContain('Could not create the recordings directory');
+});
+
+it('rejects two dataset files with the same name, which would share one recording', function (): void {
+    $directory = useExampleDatasets();
+    copy("{$directory}/plain-language-notices.yaml", "{$directory}/copy-of-notices.yaml");
+
+    [$exitCode, $output] = runEvals();
+
+    expect($exitCode)->toBe(3)
+        ->and($output)->toContain('Dataset name "plain-language-notices" is used by both')
+        ->and($output)->toContain('copy-of-notices.yaml');
+});
+
+it('keeps the other datasets and the JSON report when one dataset stops with an error', function (): void {
+    $directory = useExampleDatasets();
+    $yaml = (string) file_get_contents("{$directory}/plain-language-notices.yaml");
+    // Sorted first, and has no recording, so the recorded driver cannot run it.
+    file_put_contents("{$directory}/a-unrecorded.yaml", str_replace('name: plain-language-notices', 'name: a-unrecorded', $yaml));
+
+    [$exitCode, $output] = runEvals(['--json' => "{$directory}/report.json"]);
+    $report = json_decode((string) file_get_contents("{$directory}/report.json"), true, 64, JSON_THROW_ON_ERROR);
+
+    expect($exitCode)->toBe(3)
+        ->and($output)->toContain('recording not found')
+        ->and($output)->toContain('✓ water-main-closure')
+        ->and($output)->toContain('1 dataset run, 1 stopped by an error, exit code 3.')
+        ->and($report['exit_code'])->toBe(3)
+        ->and(array_column($report['runs'], 'dataset'))->toBe(['plain-language-notices'])
+        ->and($report['runs'][0]['exit_code'])->toBe(0)
+        ->and($report['errors'])->toHaveCount(1)
+        ->and($report['errors'][0]['dataset'])->toBe('a-unrecorded')
+        ->and($report['errors'][0]['error'])->toContain('recording not found');
+});
+
+it('exits 3 and still reports the run when the recording cannot be written after it', function (): void {
+    $directory = useExampleDatasets();
+    unlink("{$directory}/recordings/plain-language-notices.json");
+    mkdir("{$directory}/recordings/plain-language-notices.json");
+    registerSubject(static fn(): string => 'Elm Street');
+
+    [$exitCode, $output] = runEvals(['--driver' => 'subject', '--record' => true]);
+
+    expect($exitCode)->toBe(3)
+        ->and($output)->toContain('subject (subject):')
+        ->and($output)->toContain('Could not write the recording')
+        ->and($output)->toContain('1 dataset run, 1 stopped by an error, exit code 3.');
 });

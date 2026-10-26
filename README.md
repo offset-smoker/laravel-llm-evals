@@ -150,7 +150,12 @@ of a driver.
 | 3 | Invalid input: a dataset, recording, argument or configuration problem |
 
 With several datasets the highest code wins. An empty datasets directory is
-exit 3, not a pass.
+exit 3, not a pass. A dataset that stops with a setup error (exit 3), such as
+a missing recording, does not stop the others; the JSON report lists it under
+`errors`. Two dataset files with the same `name` are exit 3, because they
+would share one recording. With `--record`, existing recordings and the
+recordings directory are checked before anything is sent to the subject, so
+a bad recording never costs a live run.
 
 ## Writing a dataset
 

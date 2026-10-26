@@ -13,6 +13,7 @@ use OffsetSmoker\LlmEvals\Dataset\DatasetLoader;
 use OffsetSmoker\LlmEvals\Dataset\InvalidDataset;
 use OffsetSmoker\LlmEvals\Drivers\DriverRegistry;
 use OffsetSmoker\LlmEvals\Drivers\Recording;
+use OffsetSmoker\LlmEvals\Drivers\Response;
 use OffsetSmoker\LlmEvals\Reports\ConsoleReport;
 use OffsetSmoker\LlmEvals\Reports\JsonReport;
 use OffsetSmoker\LlmEvals\Runner\EvalRunner;
@@ -44,31 +45,44 @@ final class RunEvalsCommand extends Command
     {
         try {
             $datasets = array_map($loader->load(...), $this->datasetFiles($config));
+            $this->rejectDuplicateNames($datasets);
             $driverName = $this->driverName($config, $drivers);
             $subject = $drivers->make($driverName);
             $jsonFile = $this->jsonFile();
+            // Read before anything runs, so a bad recording or directory never costs a live run.
+            $recordings = $this->option('record') === true ? $this->earlierRecordings($config, $datasets) : null;
         } catch (InvalidDataset|InvalidArgumentException $e) {
             return $this->invalid($e->getMessage());
         }
 
         $reports = [];
+        $errors = [];
 
         foreach ($datasets as $dataset) {
             try {
                 $report = $runner->run($dataset, $subject);
-                ConsoleReport::render($report, $this->output, (bool) $this->option('with-outputs'));
-                $reports[] = $report;
-
-                if ($this->option('record') === true && $report->subject !== null) {
-                    $this->record($config, $dataset, $report);
-                }
             } catch (RuntimeException $e) {
-                // A missing recording, an unwritable recordings directory: a setup problem, never a score.
-                return $this->invalid($e->getMessage());
+                // A missing recording, a control that could not run: a setup problem, never a score.
+                $errors[] = $this->datasetError($dataset, $e);
+
+                continue;
+            }
+
+            ConsoleReport::render($report, $this->output, (bool) $this->option('with-outputs'));
+            $reports[] = $report;
+
+            if ($recordings === null || $report->subject === null) {
+                continue;
+            }
+
+            try {
+                $this->record($recordings['directory'], $dataset, $report, $recordings['responses'][$dataset->name] ?? []);
+            } catch (RuntimeException $e) {
+                $errors[] = $this->datasetError($dataset, $e);
             }
         }
 
-        $exitCode = Verdict::Passed->value;
+        $exitCode = $errors === [] ? Verdict::Passed->value : Verdict::InvalidInput->value;
 
         foreach ($reports as $report) {
             $exitCode = max($exitCode, $report->verdict()->value);
@@ -76,16 +90,94 @@ final class RunEvalsCommand extends Command
 
         if ($jsonFile !== null) {
             try {
-                $this->writeJson($jsonFile, $reports, $exitCode);
+                $this->writeJson($jsonFile, $reports, $errors, $exitCode);
             } catch (RuntimeException $e) {
                 return $this->invalid($e->getMessage());
             }
         }
 
+        $summary = count($reports) . ' dataset' . (count($reports) === 1 ? '' : 's') . ' run';
+
+        if ($errors !== []) {
+            $summary .= ', ' . count($errors) . ' stopped by an error';
+        }
+
         $this->newLine();
-        $this->line(count($reports) . ' dataset' . (count($reports) === 1 ? '' : 's') . ' run, exit code ' . $exitCode . '.');
+        $this->line("{$summary}, exit code {$exitCode}.");
 
         return $exitCode;
+    }
+
+    /**
+     * Each dataset's name is also its recording's file name, so two files
+     * with one name would replay, and --record would overwrite, one recording.
+     *
+     * @param  list<Dataset>  $datasets
+     */
+    private function rejectDuplicateNames(array $datasets): void
+    {
+        $files = [];
+
+        foreach ($datasets as $dataset) {
+            if (isset($files[$dataset->name])) {
+                throw new InvalidArgumentException("Dataset name \"{$dataset->name}\" is used by both {$files[$dataset->name]} and {$dataset->file}; each dataset needs its own name, which is also its recording's file name.");
+            }
+
+            $files[$dataset->name] = $dataset->file;
+        }
+    }
+
+    /**
+     * The recordings directory, created if needed and checked for writing,
+     * and the responses already recorded for each dataset.
+     *
+     * @param  list<Dataset>  $datasets
+     * @return array{directory: string, responses: array<string, array<string, Response>>}
+     */
+    private function earlierRecordings(Repository $config, array $datasets): array
+    {
+        $configured = $config->get('llm-evals.recordings_path');
+
+        if (! is_string($configured) || trim($configured) === '') {
+            throw new InvalidArgumentException('--record needs a recordings directory: set config llm-evals.recordings_path.');
+        }
+
+        $directory = rtrim($configured, '/\\');
+
+        set_error_handler(static fn(): bool => true);
+
+        try {
+            $created = is_dir($directory) || mkdir($directory, 0o755, true) || is_dir($directory);
+        } finally {
+            restore_error_handler();
+        }
+
+        if (! $created) {
+            throw new InvalidArgumentException("Could not create the recordings directory {$directory}.");
+        }
+
+        if (! is_writable($directory)) {
+            throw new InvalidArgumentException("The recordings directory {$directory} is not writable.");
+        }
+
+        $responses = [];
+
+        foreach ($datasets as $dataset) {
+            $file = $directory . DIRECTORY_SEPARATOR . $dataset->name . '.json';
+            $responses[$dataset->name] = is_file($file) ? Recording::read($file, $dataset->name) : [];
+        }
+
+        return ['directory' => $directory, 'responses' => $responses];
+    }
+
+    /**
+     * @return array{dataset: string, error: string}
+     */
+    private function datasetError(Dataset $dataset, RuntimeException $e): array
+    {
+        $this->error(OutputFormatter::escape(Text::terminalSafe($e->getMessage())));
+
+        return ['dataset' => $dataset->name, 'error' => Text::terminalSafe($e->getMessage())];
     }
 
     /**
@@ -197,25 +289,23 @@ final class RunEvalsCommand extends Command
         return $option;
     }
 
-    private function record(Repository $config, Dataset $dataset, RunReport $report): void
+    /**
+     * @param  array<string, Response>  $earlier
+     */
+    private function record(string $directory, Dataset $dataset, RunReport $report, array $earlier): void
     {
-        $directory = $config->get('llm-evals.recordings_path');
-
-        if (! is_string($directory) || $directory === '' || $report->subject === null) {
-            $this->warn('Not recording: config llm-evals.recordings_path is not set.');
-
+        if ($report->subject === null) {
             return;
         }
 
-        $file = rtrim($directory, '/\\') . DIRECTORY_SEPARATOR . $dataset->name . '.json';
+        $file = $directory . DIRECTORY_SEPARATOR . $dataset->name . '.json';
         $fresh = $report->subject->responses();
 
         // Cases that errored this time keep their earlier response, so an outage never erases a good recording.
-        $kept = is_file($file) ? Recording::read($file, $dataset->name) : [];
         $responses = [];
 
         foreach ($dataset->cases as $case) {
-            $response = $fresh[$case->id] ?? $kept[$case->id] ?? null;
+            $response = $fresh[$case->id] ?? $earlier[$case->id] ?? null;
 
             if ($response !== null) {
                 $responses[$case->id] = $response;
@@ -232,8 +322,9 @@ final class RunEvalsCommand extends Command
 
     /**
      * @param  list<RunReport>  $reports
+     * @param  list<array{dataset: string, error: string}>  $errors
      */
-    private function writeJson(string $file, array $reports, int $exitCode): void
+    private function writeJson(string $file, array $reports, array $errors, int $exitCode): void
     {
         $withOutputs = (bool) $this->option('with-outputs');
 
@@ -241,6 +332,7 @@ final class RunEvalsCommand extends Command
             $json = json_encode([
                 'exit_code' => $exitCode,
                 'runs' => array_map(static fn(RunReport $report): array => JsonReport::toArray($report, $withOutputs), $reports),
+                'errors' => $errors,
             ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
         } catch (JsonException $e) {
             throw new RuntimeException("Could not encode the JSON report: {$e->getMessage()}");
