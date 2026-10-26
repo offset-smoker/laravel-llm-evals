@@ -102,6 +102,8 @@ it('rejects datasets with problems, naming the location', function (string $yaml
     'ceiling not below threshold' => [str_replace('ceiling: 0.0', 'ceiling: 0.5', MINIMAL), 'control.ceiling must be below the dataset threshold'],
     'threshold out of range' => [str_replace('threshold: 0.5', 'threshold: 1.5', MINIMAL), 'threshold must be between 0 and 1'],
     'threshold as string' => [str_replace('threshold: 0.5', 'threshold: "high"', MINIMAL), 'threshold must be a number'],
+    'threshold of zero' => [str_replace(['threshold: 0.5', 'ceiling: 0.0'], ['threshold: 0', 'ceiling: 0'], MINIMAL), 'threshold must be greater than 0'],
+    'source the citation format cannot match' => [str_replace(['    input: Say hello.', 'contains: hello'], ["    sources: [\"notice 101\"]\n    input: Say hello.", 'citations: {all: true}'], MINIMAL), 'cases[0].sources has "notice 101", which the default citation format'],
     'unknown top-level key' => [MINIMAL . "\nmodel: claude-opus-5-5", 'model is not a recognised key'],
     'unknown case key' => [str_replace('    input: Say hello.', "    input: Say hello.\n    tags: [a]", MINIMAL), 'cases[0].tags is not a recognised key'],
     'bad name' => [str_replace('name: minimal', 'name: "../etc"', MINIMAL), 'name must be lowercase'],
@@ -125,6 +127,12 @@ it('rejects datasets with problems, naming the location', function (string $yaml
     'all-digit case id' => [str_replace('id: one', 'id: "123"', MINIMAL), 'and not only digits'],
     'php object tag' => [str_replace('input: Say hello.', 'input: !php/object \'O:8:"stdClass":0:{}\'', MINIMAL), 'is not valid YAML'],
 ]);
+
+it('accepts source ids of any shape when the citations grader has its own pattern', function (): void {
+    $yaml = str_replace(['    input: Say hello.', 'contains: hello'], ["    sources: [\"notice 101\"]\n    input: Say hello.", 'citations: {pattern: "/<(?<id>[a-z]+ [0-9]+)>/"}'], MINIMAL);
+
+    expect((new DatasetLoader())->load(writeDataset($yaml))->cases[0]->sources)->toBe(['notice 101']);
+});
 
 it('rejects duplicate case ids', function (): void {
     $yaml = MINIMAL . "\n  - id: one\n    input: Again.\n    expect:\n      - contains: x";

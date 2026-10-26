@@ -156,7 +156,7 @@ exit 3, not a pass.
 
 ```yaml
 name: plain-language-notices      # lowercase; also the recording's file name
-threshold: 1.0                    # share of cases that must pass, 0 to 1 (default 1)
+threshold: 1.0                    # share of cases that must pass, above 0 and up to 1 (default 1)
 system: |                         # optional; sent as the system prompt by the claude driver
   You rewrite public notices for residents...
 
@@ -166,7 +166,7 @@ control:                          # required, see below
 
 cases:
   - id: water-main-closure
-    sources: [notice-101]         # ids the output may cite
+    sources: [notice-101]         # ids the output may cite, cited as [notice-101]
     input: |
       Rewrite notice-101 in plain language: ...
     expect:

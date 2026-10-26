@@ -19,6 +19,9 @@ final readonly class CitationsPresent implements Grader
 {
     public const string DEFAULT_PATTERN = '/\[(?<id>[A-Za-z0-9][A-Za-z0-9._:\-]{0,127})\]/';
 
+    /** A whole id the default pattern can capture. */
+    private const string DEFAULT_ID = '/^[A-Za-z0-9][A-Za-z0-9._:\-]{0,127}$/D';
+
     public function __construct(
         private int $min = 1,
         private bool $all = false,
@@ -36,6 +39,15 @@ final readonly class CitationsPresent implements Grader
     public function describe(): string
     {
         return $this->all ? 'cites every source' : "cites at least {$this->min} source" . ($this->min === 1 ? '' : 's');
+    }
+
+    /**
+     * False when the default pattern could never capture this source id, so a
+     * case that must cite it could never pass. A custom pattern is trusted.
+     */
+    public function canCite(string $source): bool
+    {
+        return $this->pattern !== self::DEFAULT_PATTERN || preg_match(self::DEFAULT_ID, $source) === 1;
     }
 
     public function grade(Response $response, EvalCase $case): Grade

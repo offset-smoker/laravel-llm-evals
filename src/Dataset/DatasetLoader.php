@@ -52,6 +52,10 @@ final readonly class DatasetLoader
         $root->optionalString('description', 2_000);
         $threshold = $root->optionalFloat('threshold', 0, 1) ?? 1.0;
 
+        if ($threshold <= 0.0) {
+            $root->fail('threshold', 'must be greater than 0; a threshold of 0 passes every run, and no control ceiling can sit below it.');
+        }
+
         if (! $root->has('control')) {
             $root->fail('control', 'is required: every dataset needs a deliberately bad baseline that must fail its graders (see the README, "The falsifiability control").');
         }
@@ -229,8 +233,18 @@ final readonly class DatasetLoader
         }
 
         foreach ($graders as $grader) {
-            if ($grader instanceof CitationsPresent && $sources === []) {
+            if (! $grader instanceof CitationsPresent) {
+                continue;
+            }
+
+            if ($sources === []) {
                 $spec->fail('sources', 'must list the source ids this case may cite, because it uses the citations grader.');
+            }
+
+            foreach ($sources as $source) {
+                if (! $grader->canCite($source)) {
+                    $spec->fail('sources', 'has "' . Text::excerpt($source, 128) . '", which the default citation format ([id], with letters, digits, ".", "_", ":" or "-") can never cite; rename it, or give the citations grader its own pattern.');
+                }
             }
         }
 
