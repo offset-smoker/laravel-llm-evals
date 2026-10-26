@@ -34,3 +34,7 @@ it('uses extra phrases', function (): void {
 
     expect($grader->grade(reply('That is outside what this assistant covers.'), evalCase())->passed)->toBeTrue();
 });
+
+it('matches extra phrases written with curly apostrophes', function (): void {
+    expect((new Refusal(true, ['I won’t look that up']))->grade(reply("I won't look that up."), evalCase())->passed)->toBeTrue();
+});

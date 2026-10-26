@@ -7,7 +7,7 @@ use OffsetSmoker\LlmEvals\Graders\CitationsPresent;
 it('passes when the response cites a source of the case', function (): void {
     $grade = (new CitationsPresent())->grade(reply('Closed Tuesday. [notice-101]'), evalCase(sources: ['notice-101']));
 
-    expect($grade->passed)->toBeTrue()->and($grade->reason)->toBe('cites notice-101');
+    expect($grade->passed)->toBeTrue()->and($grade->reason)->toBe('cites 1 source(s)');
 });
 
 it('fails when nothing is cited', function (): void {
@@ -19,7 +19,9 @@ it('fails when nothing is cited', function (): void {
 it('fails an invented citation even when a real one is present', function (): void {
     $grade = (new CitationsPresent())->grade(reply('[notice-101] and [notice-999]'), evalCase(sources: ['notice-101']));
 
-    expect($grade->passed)->toBeFalse()->and($grade->reason)->toContain('notice-999');
+    expect($grade->passed)->toBeFalse()
+        ->and($grade->reason)->toBe('cites 1 id(s) that are not sources of this case')
+        ->and($grade->reason)->not->toContain('notice-999');
 });
 
 it('counts each source once', function (): void {

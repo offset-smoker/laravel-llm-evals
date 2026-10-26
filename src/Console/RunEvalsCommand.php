@@ -18,6 +18,7 @@ use OffsetSmoker\LlmEvals\Reports\JsonReport;
 use OffsetSmoker\LlmEvals\Runner\EvalRunner;
 use OffsetSmoker\LlmEvals\Runner\RunReport;
 use OffsetSmoker\LlmEvals\Runner\Verdict;
+use OffsetSmoker\LlmEvals\Support\Text;
 use RuntimeException;
 use Symfony\Component\Console\Formatter\OutputFormatter;
 
@@ -36,6 +37,8 @@ final class RunEvalsCommand extends Command
         {--with-outputs : Include model outputs in the console and JSON reports}';
 
     protected $description = 'Run LLM evaluation datasets and their falsifiability controls';
+
+    private const array EXTENSIONS = ['json', 'yaml', 'yml'];
 
     public function handle(Repository $config, DatasetLoader $loader, DriverRegistry $drivers, EvalRunner $runner): int
     {
@@ -102,14 +105,26 @@ final class RunEvalsCommand extends Command
 
         if ($arguments === []) {
             $files = [];
+            // scandir rather than glob: a directory name with glob metacharacters ("[1]") must still work.
+            $entries = scandir($base);
 
-            // Three globs rather than GLOB_BRACE, which musl-based images (Alpine) lack.
-            foreach (['json', 'yaml', 'yml'] as $extension) {
-                $matches = glob($base . DIRECTORY_SEPARATOR . '*.' . $extension);
-                $files = [...$files, ...array_filter($matches === false ? [] : $matches, is_file(...))];
+            foreach ($entries === false ? [] : $entries as $entry) {
+                if (! in_array(strtolower(pathinfo($entry, PATHINFO_EXTENSION)), self::EXTENSIONS, true)) {
+                    continue;
+                }
+
+                $real = realpath($base . DIRECTORY_SEPARATOR . $entry);
+
+                if ($real === false || ! is_file($real)) {
+                    continue;
+                }
+
+                if (! str_starts_with($real, $base . DIRECTORY_SEPARATOR)) {
+                    throw new InvalidArgumentException("Dataset \"{$entry}\" is a link to a file outside the datasets directory {$base}.");
+                }
+
+                $files[] = $real;
             }
-
-            sort($files);
 
             if ($files === []) {
                 throw new InvalidArgumentException("No datasets found in {$base}. An empty run is not a pass.");
@@ -124,9 +139,9 @@ final class RunEvalsCommand extends Command
     private function resolveInside(string $base, string $argument): string
     {
         $candidate = str_starts_with($argument, DIRECTORY_SEPARATOR) ? $argument : $base . DIRECTORY_SEPARATOR . $argument;
-        $options = pathinfo($candidate, PATHINFO_EXTENSION) === ''
-            ? ["{$candidate}.yaml", "{$candidate}.yml", "{$candidate}.json"]
-            : [$candidate];
+        $options = in_array(strtolower(pathinfo($candidate, PATHINFO_EXTENSION)), self::EXTENSIONS, true)
+            ? [$candidate]
+            : ["{$candidate}.yaml", "{$candidate}.yml", "{$candidate}.json"];
 
         foreach ($options as $option) {
             $real = realpath($option);
@@ -193,10 +208,26 @@ final class RunEvalsCommand extends Command
         }
 
         $file = rtrim($directory, '/\\') . DIRECTORY_SEPARATOR . $dataset->name . '.json';
-        Recording::write($file, $dataset->name, $report->subject->responses());
+        $fresh = $report->subject->responses();
 
-        $missing = $report->subject->erroredCount();
-        $this->line("  recorded to {$file}" . ($missing > 0 ? " ({$missing} errored cases not recorded)" : ''));
+        // Cases that errored this time keep their earlier response, so an outage never erases a good recording.
+        $kept = is_file($file) ? Recording::read($file, $dataset->name) : [];
+        $responses = [];
+
+        foreach ($dataset->cases as $case) {
+            $response = $fresh[$case->id] ?? $kept[$case->id] ?? null;
+
+            if ($response !== null) {
+                $responses[$case->id] = $response;
+            }
+        }
+
+        Recording::write($file, $dataset->name, $responses);
+
+        $errored = $report->subject->erroredCount();
+        $carried = count($responses) - count($fresh);
+        $note = $errored === 0 ? '' : " ({$errored} errored cases not re-recorded; {$carried} kept from the previous recording)";
+        $this->line("  recorded to {$file}{$note}");
     }
 
     /**
@@ -230,7 +261,7 @@ final class RunEvalsCommand extends Command
 
     private function invalid(string $message): int
     {
-        $this->error(OutputFormatter::escape($message));
+        $this->error(OutputFormatter::escape(Text::terminalSafe($message)));
 
         return Verdict::InvalidInput->value;
     }

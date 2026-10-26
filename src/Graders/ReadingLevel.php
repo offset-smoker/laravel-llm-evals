@@ -38,7 +38,8 @@ final readonly class ReadingLevel implements Grader
 
         $summary = 'grade ' . self::format($grade);
 
-        return $grade <= $this->maxGrade ? Grade::pass($summary) : Grade::fail($summary);
+        // Compared at the precision it is reported, so a pass never reads "grade 8.0" against a maximum of 8.0 as a failure.
+        return round($grade, 1) <= $this->maxGrade ? Grade::pass($summary) : Grade::fail($summary);
     }
 
     private static function format(float $grade): string

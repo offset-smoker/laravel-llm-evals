@@ -82,6 +82,12 @@ $this->app->make(DriverRegistry::class)->extend('notice-rewriter', fn () => new 
 php artisan evals:run --driver=notice-rewriter
 ```
 
+If your feature cannot answer a case, throw
+`OffsetSmoker\LlmEvals\Drivers\DriverFailed` with a message that is safe to
+print. Any other exception also fails just that case, but the report shows
+only its class, file and line, because exception messages often quote the
+prompt.
+
 A failing case lists the graders it failed and why:
 
 ```text
@@ -170,10 +176,16 @@ of passing cases is at or above `threshold`. Reports also show a mean grader
 score (the share of graders passed, averaged over cases) to show partial
 progress.
 
-Everything is validated before anything runs. Unknown keys, wrong types,
-duplicate case ids, invalid regular expressions or schemas, a case with no
-graders, and a missing control are all errors that name the file and the
-location, such as `cases[2].expect[0].regex is not a valid PCRE pattern`.
+Everything in the dataset files is validated before anything runs. Unknown
+keys, wrong types, duplicate case ids, invalid regular expressions or
+schemas, a case with no graders, and a missing or incomplete control are all
+errors that name the file and the location, such as
+`cases[2].expect[0].regex is not a valid PCRE pattern`. Case ids may not be
+all digits.
+
+Grader reasons describe the expectation and what was found without quoting
+the output: `contains "Elm Street": not found`, `cites 1 id(s) that are not
+sources of this case`, `schema violations: pattern at #/properties/date`.
 
 ### Graders
 
@@ -183,7 +195,7 @@ location, such as `cases[2].expect[0].regex is not a valid PCRE pattern`.
 | `not_contains` | same as `contains` | the output does not contain the text |
 | `regex` | `"/pattern/flags"` | the PCRE pattern matches |
 | `not_regex` | `"/pattern/flags"` | the pattern does not match |
-| `json_schema` | a JSON Schema object | the output is JSON valid against the schema; one Markdown code fence around it is allowed |
+| `json_schema` | a JSON Schema object | the output is JSON valid against the schema; one Markdown code fence around it is allowed. Only local `$ref`s (`#/...`) are accepted |
 | `citations` | `true` or `{min, all, pattern}` | at least `min` (default 1) of the case's `sources` are cited, no cited id is outside them, and with `all` every source is cited. Citations look like `[notice-101]`; `pattern` takes a PCRE with a named `(?<id>...)` group |
 | `refusal` | `true`, `false` or `{expected, phrases}` | the output refuses (or answers) as expected. A `refusal` stop reason from the provider counts as a refusal |
 | `reading_level` | a number or `{max_grade}` | the Flesch-Kincaid grade level is at or below the number |
@@ -210,7 +222,14 @@ should reject.
 |---|---|
 | `constant: "text"` | the same text for every case |
 | `echo: true` | each case's input, unchanged |
-| `recorded: path/to/bad.json` | responses from a recording file, relative to the dataset's directory |
+| `recorded: controls/bad.json` | responses from a recording file, relative to the dataset's directory |
+
+Keep control recordings in a subdirectory such as `controls/`: every `.json`
+and `.yaml` file at the top level of the datasets directory is loaded as a
+dataset. A control recording must exist when the dataset loads, stay inside
+the dataset's directory (symlinks are resolved), and hold a response for
+every case. A control that cannot produce an answer would "fail" every case
+and look as if it held, so a control error is exit 3, never a pass.
 
 The control's pass rate must be at or below `ceiling` (default 0), and the
 ceiling must be below the dataset's `threshold`. The control runs first. When
@@ -233,7 +252,7 @@ case that expects a refusal, and fails the other two, so its ceiling is 0.34.
 | `recordings_path` | `base_path('evals/recordings')` | where the `recorded` driver reads and `--record` writes `<name>.json` |
 | `default_driver` | `recorded` (`LLM_EVALS_DRIVER`) | the driver used without `--driver` |
 | `claude.api_key` | `ANTHROPIC_API_KEY` | read from the environment only |
-| `claude.model` | `claude-opus-5-5` (`LLM_EVALS_CLAUDE_MODEL`) | for example `claude-sonnet-5-5` or `claude-haiku-5-5` |
+| `claude.model` | `claude-opus-5-5` (`LLM_EVALS_CLAUDE_MODEL`) | for example `claude-sonnet-5-5` or `claude-haiku-5-5`; cloud-platform ids such as `us.anthropic.claude-opus-5-5` are accepted too |
 | `claude.max_tokens` | `4096` (`LLM_EVALS_CLAUDE_MAX_TOKENS`) | 1 to 32,000 |
 | `claude.effort` | `medium` (`LLM_EVALS_CLAUDE_EFFORT`) | `low`, `medium`, `high`, `xhigh` or `max` |
 
@@ -268,7 +287,7 @@ vendor/bin/phpstan analyse
 vendor/bin/pint --test
 ```
 
-The suite has 162 tests: unit tests for every grader, the dataset loader, the
+The suite has 192 tests: unit tests for every grader, the dataset loader, the
 runner, recordings and the Claude driver; feature tests for `evals:run` and
 the Pest expectations on Orchestra Testbench; and architecture tests,
 including one that fails if anything in `src/` logs. The Claude driver's
@@ -298,9 +317,12 @@ API to move before 1.0.
   live API. The SDK request and response handling is exercised; the live
   service is not.
 - JSON Schemas written inline in YAML or JSON lose the difference between
-  `{}` and `[]`. Empty maps under `properties`, `patternProperties`, `$defs`,
-  `definitions` and `dependentSchemas` are restored as objects; anywhere else,
-  an empty map becomes an empty list.
+  `{}` and `[]`. In schema positions (`properties` entries, `items`, `allOf`
+  members and so on) an empty value is read as `{}`, the schema that accepts
+  anything. Inside `enum`, `const`, `default` and `examples`, an empty map is
+  read as an empty list.
+- Developed and tested on Linux and macOS. Path handling on Windows has not
+  been tested.
 
 ## How this was built
 

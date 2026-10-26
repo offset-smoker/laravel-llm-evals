@@ -22,3 +22,11 @@ First release.
 - `php artisan evals:run` with exit codes 0 to 3, `--record`, `--json` and
   `--with-outputs`.
 - Pest expectations `toPassEval()` and `toPassGraders()`.
+- Hardening from an independent review before release: control recordings
+  are checked at load time and a control that errors is exit 3; exceptions
+  from drivers and graders are contained per case without their messages;
+  dataset discovery resolves symlinks; YAML alias bombs are rejected; error
+  messages are stripped of control characters and never quote YAML lines;
+  grader reasons never quote output; non-local JSON Schema references are
+  rejected anywhere in a schema; `--record` keeps earlier responses for cases
+  that error.

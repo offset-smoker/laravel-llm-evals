@@ -9,10 +9,12 @@ use OffsetSmoker\LlmEvals\Drivers\ConstantDriver;
 use OffsetSmoker\LlmEvals\Drivers\Driver;
 use OffsetSmoker\LlmEvals\Drivers\EchoDriver;
 use OffsetSmoker\LlmEvals\Drivers\RecordedDriver;
+use OffsetSmoker\LlmEvals\Drivers\Recording;
 use OffsetSmoker\LlmEvals\Graders\CitationsPresent;
 use OffsetSmoker\LlmEvals\Graders\Grader;
 use OffsetSmoker\LlmEvals\Graders\GraderFactory;
 use OffsetSmoker\LlmEvals\Support\Spec;
+use OffsetSmoker\LlmEvals\Support\Text;
 use Symfony\Component\Yaml\Exception\ParseException;
 use Symfony\Component\Yaml\Yaml;
 
@@ -29,9 +31,10 @@ final readonly class DatasetLoader
 
     public const int MAX_INPUT_LENGTH = 200_000;
 
-    public const string NAME_PATTERN = '/^[a-z0-9][a-z0-9._-]{0,99}$/';
+    public const string NAME_PATTERN = '/^[a-z0-9][a-z0-9._-]{0,99}$/D';
 
-    public const string CASE_ID_PATTERN = '/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/';
+    /** All-digit ids are excluded: PHP turns them into integer keys, which recordings cannot round-trip. */
+    public const string CASE_ID_PATTERN = '/^(?!\d+$)[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/D';
 
     public function __construct(private GraderFactory $graders = new GraderFactory()) {}
 
@@ -71,6 +74,12 @@ final readonly class DatasetLoader
 
         if ($cases === []) {
             $root->fail('cases', 'must contain at least one case.');
+        }
+
+        $controlSpec = $root->map('control');
+
+        if ($controlSpec->has('recorded')) {
+            $this->checkRecordedControl($controlSpec, $file, $name, array_keys($seen));
         }
 
         return new Dataset($name, $threshold, $root->optionalString('system', self::MAX_INPUT_LENGTH), $control, $cases, $file);
@@ -125,7 +134,8 @@ final readonly class DatasetLoader
             // No PHP objects, constants or custom tags; a !php/object tag is an error, not a silent null.
             return Yaml::parse($contents, Yaml::PARSE_EXCEPTION_ON_INVALID_TYPE);
         } catch (ParseException $e) {
-            throw InvalidDataset::file($file, "is not valid YAML ({$e->getMessage()}).");
+            // The parser's message quotes the offending line, which may be case input: report the line number only.
+            throw InvalidDataset::file($file, "is not valid YAML (parse error on line {$e->getParsedLine()}).");
         }
     }
 
@@ -156,6 +166,39 @@ final readonly class DatasetLoader
 
     private function recordedControl(Spec $spec, string $file): Driver
     {
+        return RecordedDriver::fromFile($this->recordedControlPath($spec, $file));
+    }
+
+    /**
+     * The control recording must exist, stay inside the dataset's directory
+     * once symlinks are resolved, and hold a response for every case, so a
+     * control can never "fail" just because it errored.
+     *
+     * @param  list<string>  $caseIds
+     */
+    private function checkRecordedControl(Spec $spec, string $file, string $name, array $caseIds): void
+    {
+        $path = $this->recordedControlPath($spec, $file);
+        $real = realpath($path);
+        $directory = realpath(dirname($file));
+
+        if ($real === false || $directory === false || ! is_file($real)) {
+            $spec->fail('recorded', 'names a recording that does not exist.');
+        }
+
+        if (! str_starts_with($real, $directory . DIRECTORY_SEPARATOR)) {
+            $spec->fail('recorded', 'resolves outside the dataset\'s directory.');
+        }
+
+        $missing = array_diff($caseIds, array_keys(Recording::read($real, $name)));
+
+        if ($missing !== []) {
+            $spec->fail('recorded', 'has no response for ' . count($missing) . ' case(s): ' . Text::excerpt(implode(', ', $missing), 200) . '.');
+        }
+    }
+
+    private function recordedControlPath(Spec $spec, string $file): string
+    {
         $path = $spec->string('recorded', 500);
         $segments = preg_split('#[/\\\\]#', $path);
         $segments = $segments === false ? [] : $segments;
@@ -165,7 +208,7 @@ final readonly class DatasetLoader
             $spec->fail('recorded', 'must be a relative path to a .json recording inside the dataset\'s directory.');
         }
 
-        return RecordedDriver::fromFile(dirname($file) . DIRECTORY_SEPARATOR . $path);
+        return dirname($file) . DIRECTORY_SEPARATOR . $path;
     }
 
     private function case(Spec $spec): EvalCase
@@ -175,7 +218,7 @@ final readonly class DatasetLoader
         $id = $spec->string('id', 128);
 
         if (preg_match(self::CASE_ID_PATTERN, $id) !== 1) {
-            $spec->fail('id', 'must be letters, digits, ".", "_", ":" or "-", starting with a letter or digit.');
+            $spec->fail('id', 'must be letters, digits, ".", "_", ":" or "-", starting with a letter or digit, and not only digits.');
         }
 
         $sources = $spec->listOfStrings('sources', 1_000, 128);

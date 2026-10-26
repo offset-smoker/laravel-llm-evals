@@ -42,3 +42,10 @@ it('fails empty output instead of scoring it', function (): void {
 it('rejects an out-of-range maximum', function (): void {
     new ReadingLevel(31);
 })->throws(InvalidArgumentException::class);
+
+it('never fails a grade that reads as equal to the maximum', function (): void {
+    $text = 'The township office closes early on Friday. Residents should call ahead before visiting.';
+    $grade = ReadabilityScore::fleschKincaidGrade($text) ?? 0.0;
+
+    expect((new ReadingLevel(round($grade, 1)))->grade(reply($text), evalCase())->passed)->toBeTrue();
+});

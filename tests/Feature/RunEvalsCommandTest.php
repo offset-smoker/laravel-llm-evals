@@ -101,7 +101,7 @@ it('exits 3 on invalid input', function (array $arguments, ?Closure $setup, stri
 })->with([
     'unknown driver' => [['--driver' => 'nope'], null, 'Unknown driver "nope" (registered: recorded, claude)'],
     'unknown dataset' => [['datasets' => ['missing']], null, 'Dataset "missing" was not found'],
-    'dataset outside the directory' => [['datasets' => ['../../../../etc/hosts']], null, 'was not found'],
+    'dataset name read as an extension' => [['datasets' => ['plain-language-notices.v2']], null, 'Dataset "plain-language-notices.v2" was not found'],
     'record with recorded' => [['--record' => true], null, '--record cannot be used with the recorded driver'],
     'json without extension' => [['--json' => '/tmp/report.txt'], null, '--json must name a .json file'],
     'json in a missing directory' => [['--json' => '/nonexistent/dir/report.json'], null, 'does not exist'],
@@ -240,7 +240,7 @@ it('records a live run and replays it offline', function (): void {
         ->and(runEvals()[0])->toBe(0);
 });
 
-it('counts a failed API call as a failed case and does not record it', function (): void {
+it('counts a failed API call as a failed case and keeps the earlier recording for it', function (): void {
     $directory = useExampleDatasets();
 
     $transport = (new FakeTransport())
@@ -254,9 +254,13 @@ it('counts a failed API call as a failed case and does not record it', function 
 
     expect($exitCode)->toBe(1)
         ->and($output)->toContain('✗ permit-hearing-json  Claude returned HTTP 529 overloaded_error')
-        ->and($output)->toContain('(1 errored cases not recorded)')
-        ->and(array_keys(Recording::read("{$directory}/recordings/plain-language-notices.json", 'plain-language-notices')))
-        ->toBe(['water-main-closure', 'refuses-resident-address']);
+        ->and($output)->toContain('(1 errored cases not re-recorded; 1 kept from the previous recording)');
+
+    $recording = Recording::read("{$directory}/recordings/plain-language-notices.json", 'plain-language-notices');
+
+    expect(array_keys($recording))->toBe(['water-main-closure', 'permit-hearing-json', 'refuses-resident-address'])
+        ->and($recording['water-main-closure']->text)->toStartWith('The water main under Elm Street will be shut off on Tuesday at 9:00 a.m. It should')
+        ->and($recording['permit-hearing-json']->text)->toContain('ZP-2026-031');
 });
 
 it('builds the claude driver from config', function (): void {
@@ -295,4 +299,53 @@ it('exits 3 when the JSON report cannot be written', function (): void {
     [$exitCode, $output] = runEvals(['--json' => "{$directory}/report.json"]);
 
     expect($exitCode)->toBe(3)->and($output)->toContain('Could not write the JSON report');
+});
+
+it('rejects a dataset reached through ../ that resolves outside the datasets directory', function (): void {
+    $directory = useExampleDatasets();
+    $outside = scratchDirectory();
+    copy(examplesPath('plain-language-notices.yaml'), "{$outside}/elsewhere.yaml");
+    $relative = '../' . basename($outside) . '/elsewhere.yaml';
+
+    expect(is_file("{$directory}/{$relative}"))->toBeTrue();
+
+    [$exitCode, $output] = runEvals(['datasets' => [$relative]]);
+
+    expect($exitCode)->toBe(3)->and($output)->toContain('is outside the datasets directory');
+});
+
+it('rejects a symlink that escapes the datasets directory when running everything', function (): void {
+    $directory = useExampleDatasets();
+    $outside = scratchDirectory();
+    copy(examplesPath('plain-language-notices.yaml'), "{$outside}/elsewhere.yaml");
+    symlink("{$outside}/elsewhere.yaml", "{$directory}/linked.yaml");
+
+    [$exitCode, $output] = runEvals();
+
+    expect($exitCode)->toBe(3)->and($output)->toContain('Dataset "linked.yaml" is a link to a file outside the datasets directory');
+});
+
+it('finds datasets in a directory whose name has glob characters', function (): void {
+    $directory = scratchDirectory() . '/evals [1]';
+    mkdir("{$directory}/recordings", 0o755, true);
+    copy(examplesPath('plain-language-notices.yaml'), "{$directory}/plain-language-notices.yaml");
+    copy(examplesPath('recordings/plain-language-notices.json'), "{$directory}/recordings/plain-language-notices.json");
+    config()->set('llm-evals.datasets_path', $directory);
+    config()->set('llm-evals.recordings_path', "{$directory}/recordings");
+
+    expect(runEvals()[0])->toBe(0);
+});
+
+it('turns any exception from the subject into a failed case without its message', function (): void {
+    useExampleDatasets();
+    registerSubject(static function (EvalCase $case): string {
+        throw new LogicException("leaking {$case->input}");
+    });
+
+    [$exitCode, $output] = runEvals(['--driver' => 'subject']);
+
+    expect($exitCode)->toBe(1)
+        ->and($output)->toContain('The driver threw LogicException at RunEvalsCommandTest.php:')
+        ->and($output)->not->toContain('leaking')
+        ->and($output)->toContain('1 dataset run, exit code 1.');
 });

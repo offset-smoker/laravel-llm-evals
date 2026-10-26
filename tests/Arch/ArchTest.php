@@ -10,7 +10,7 @@ arch('strict preset')->preset()->strict();
 
 arch('the package never logs: no logger, Log facade or error_log anywhere in src')
     ->expect('OffsetSmoker\LlmEvals')
-    ->not->toUse(['Illuminate\Support\Facades\Log', 'Psr\Log\LoggerInterface', 'Illuminate\Log', 'logger', 'info', 'error_log', 'dump', 'dd', 'var_dump', 'print_r']);
+    ->not->toUse(['Illuminate\Support\Facades\Log', 'Psr\Log\LoggerInterface', 'Illuminate\Log', 'logger', 'info', 'error_log', 'syslog', 'openlog', 'trigger_error', 'user_error', 'fwrite', 'fputs', 'dump', 'dd', 'var_dump', 'print_r']);
 
 arch('configuration is read through config, never env, outside the config file')
     ->expect('OffsetSmoker\LlmEvals')

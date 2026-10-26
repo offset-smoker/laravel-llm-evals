@@ -105,6 +105,7 @@ it('validates its configuration', function (string $model, int $maxTokens, ?stri
 })->with([
     'model with spaces' => ['claude opus', 4096, null, 'model id must look like'],
     'not a claude model' => ['gpt-x', 4096, null, 'model id must look like'],
+    'control characters' => ["claude-opus-5-5\n", 4096, null, 'model id must look like'],
     'zero tokens' => ['claude-opus-5-5', 0, null, 'max_tokens must be between'],
     'too many tokens' => ['claude-opus-5-5', 64_000, null, 'max_tokens must be between'],
     'unknown effort' => ['claude-opus-5-5', 4096, 'extreme', 'effort must be one of: low, medium, high, xhigh, max'],
@@ -112,7 +113,7 @@ it('validates its configuration', function (string $model, int $maxTokens, ?stri
 
 it('accepts the current model ids', function (string $model): void {
     expect((new ClaudeDriver(claudeClient(new FakeTransport()), $model))->name())->toBe("claude:{$model}");
-})->with(['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']);
+})->with(['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-sonnet-4-5@20250929', 'us.anthropic.claude-opus-5-5']);
 
 it('reports a malformed or incomplete API response as a failed case', function (string $fixture, string $message): void {
     $transport = (new FakeTransport())->replay($fixture);

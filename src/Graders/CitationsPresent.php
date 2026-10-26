@@ -56,7 +56,8 @@ final readonly class CitationsPresent implements Grader
         $unknown = array_values(array_diff($cited, $case->sources));
 
         if ($unknown !== []) {
-            return Grade::fail('cites ids that are not sources of this case: ' . Text::excerpt(implode(', ', $unknown)));
+            // The count only: the ids come from the response, which reports leave out by default.
+            return Grade::fail('cites ' . count($unknown) . ' id(s) that are not sources of this case');
         }
 
         if (count($cited) < $this->min) {
@@ -69,6 +70,6 @@ final readonly class CitationsPresent implements Grader
             return Grade::fail('does not cite: ' . Text::excerpt(implode(', ', $missing)));
         }
 
-        return Grade::pass('cites ' . implode(', ', $cited));
+        return Grade::pass('cites ' . count($cited) . ' source(s)');
     }
 }

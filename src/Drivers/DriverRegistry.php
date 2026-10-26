@@ -18,7 +18,7 @@ use InvalidArgumentException;
  */
 final class DriverRegistry
 {
-    public const string NAME_PATTERN = '/^[a-z][a-z0-9_-]{0,63}$/';
+    public const string NAME_PATTERN = '/^[a-z][a-z0-9_-]{0,63}$/D';
 
     /** @var array<string, Closure(): Driver> */
     private array $factories = [];

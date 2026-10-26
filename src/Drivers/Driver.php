@@ -6,6 +6,7 @@ namespace OffsetSmoker\LlmEvals\Drivers;
 
 use OffsetSmoker\LlmEvals\Dataset\Dataset;
 use OffsetSmoker\LlmEvals\Dataset\EvalCase;
+use OffsetSmoker\LlmEvals\Dataset\InvalidDataset;
 
 /**
  * Produces the output that graders score: a model call, a recording, a
@@ -20,6 +21,7 @@ interface Driver
 
     /**
      * @throws DriverFailed when no output could be produced for this case
+     * @throws InvalidDataset when the driver's own input is unusable, such as a missing recording
      */
     public function respond(EvalCase $case, Dataset $dataset): Response;
 }

@@ -125,3 +125,33 @@ it('fails the shipped example when the subject just echoes the input', function 
     expect($report->verdict())->toBe(Verdict::BelowThreshold)
         ->and($report->subject?->passedCount())->toBe(0);
 });
+
+it('refuses to treat an errored control as a control that held', function (): void {
+    $dataset = new OffsetSmoker\LlmEvals\Dataset\Dataset('test-set', 1.0, null, new OffsetSmoker\LlmEvals\Dataset\Control(
+        new CallbackDriver(static fn(): string => throw new DriverFailed('no recording')),
+        0.0,
+    ), fourCases(), '/datasets/test-set.yaml');
+
+    (new EvalRunner())->run($dataset, answering(1, 2, 3, 4));
+})->throws(OffsetSmoker\LlmEvals\Dataset\InvalidDataset::class, 'the control could not produce output for 4 case(s)');
+
+it('fails a grader that throws instead of crashing the run', function (): void {
+    $grader = new class implements OffsetSmoker\LlmEvals\Graders\Grader {
+        public function describe(): string
+        {
+            return 'explodes';
+        }
+
+        public function grade(Response $response, EvalCase $case): OffsetSmoker\LlmEvals\Graders\Grade
+        {
+            throw new RuntimeException("contains {$response->text}");
+        }
+    };
+
+    $case = new EvalCase('case-1', 'in', [], [$grader]);
+    $result = (new EvalRunner())->run(makeDataset([$case], threshold: 1.0), new CallbackDriver(static fn(): string => 'SECRET'))->subject?->cases[0];
+
+    expect($result?->passed())->toBeFalse()
+        ->and($result?->graderResults[0]->grade->reason)->toStartWith('the grader threw RuntimeException at EvalRunnerTest.php:')
+        ->and($result?->graderResults[0]->grade->reason)->not->toContain('SECRET');
+});

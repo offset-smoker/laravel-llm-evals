@@ -35,7 +35,9 @@ final readonly class ClaudeDriver implements Driver
         private int $maxTokens = 4096,
         ?string $effort = 'medium',
     ) {
-        if (preg_match('/^claude-[a-z0-9]+(?:-[a-z0-9]+)*$/', $model) !== 1) {
+        // Loose on purpose: first-party ids ("claude-opus-5-5"), Vertex ids ("claude-...@20250929") and
+        // Bedrock ids ("anthropic.claude-...") all pass; spaces, quotes and control characters do not.
+        if (preg_match('/^[A-Za-z0-9][A-Za-z0-9._:@\/-]{0,199}$/D', $model) !== 1 || ! str_contains($model, 'claude')) {
             throw new InvalidArgumentException('The Claude model id must look like "claude-opus-5-5".');
         }
 

@@ -41,7 +41,7 @@ final class GraderFactory
      */
     public function extend(string $type, Closure $factory): void
     {
-        if (preg_match('/^[a-z][a-z0-9_]{0,63}$/', $type) !== 1) {
+        if (preg_match('/^[a-z][a-z0-9_]{0,63}$/D', $type) !== 1) {
             throw new InvalidArgumentException("Grader type \"{$type}\" must be snake_case.");
         }
 

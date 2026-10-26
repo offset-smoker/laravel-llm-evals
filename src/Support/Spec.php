@@ -22,10 +22,22 @@ final readonly class Spec
         public string $path,
     ) {}
 
+    /**
+     * The most values a file may hold once YAML aliases are expanded, so a
+     * small file built from nested aliases cannot exhaust memory.
+     */
+    public const int MAX_NODES = 250_000;
+
     public static function root(mixed $data, string $file): self
     {
         if (! is_array($data) || ($data !== [] && array_is_list($data))) {
             throw InvalidDataset::file($file, 'must contain a map at the top level.');
+        }
+
+        $budget = self::MAX_NODES;
+
+        if (! self::withinNodeBudget($data, $budget)) {
+            throw InvalidDataset::file($file, 'holds more than ' . self::MAX_NODES . ' values (YAML aliases count once per use).');
         }
 
         return new self(self::stringKeys($data, $file, ''), $file, '');
@@ -33,6 +45,8 @@ final readonly class Spec
 
     public function at(string $key): string
     {
+        $key = Text::excerpt($key, 64);
+
         return $this->path === '' ? $key : "{$this->path}.{$key}";
     }
 
@@ -253,5 +267,25 @@ final readonly class Spec
         }
 
         return $result;
+    }
+
+    /**
+     * Counts values depth-first and stops as soon as the budget runs out.
+     *
+     * @param  array<array-key, mixed>  $data
+     */
+    private static function withinNodeBudget(array $data, int &$budget): bool
+    {
+        foreach ($data as $value) {
+            if (--$budget < 0) {
+                return false;
+            }
+
+            if (is_array($value) && ! self::withinNodeBudget($value, $budget)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 }

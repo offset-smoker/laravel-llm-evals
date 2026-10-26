@@ -7,6 +7,8 @@ use OffsetSmoker\LlmEvals\Dataset\InvalidDataset;
 use OffsetSmoker\LlmEvals\Drivers\ConstantDriver;
 use OffsetSmoker\LlmEvals\Drivers\EchoDriver;
 use OffsetSmoker\LlmEvals\Drivers\RecordedDriver;
+use OffsetSmoker\LlmEvals\Drivers\Recording;
+use OffsetSmoker\LlmEvals\Drivers\Response;
 use OffsetSmoker\LlmEvals\Graders\CitationsPresent;
 use OffsetSmoker\LlmEvals\Graders\Contains;
 use OffsetSmoker\LlmEvals\Graders\GraderFactory;
@@ -14,6 +16,7 @@ use OffsetSmoker\LlmEvals\Graders\JsonSchema;
 use OffsetSmoker\LlmEvals\Graders\Matches;
 use OffsetSmoker\LlmEvals\Graders\ReadingLevel;
 use OffsetSmoker\LlmEvals\Graders\Refusal;
+use OffsetSmoker\LlmEvals\Support\Spec;
 
 function writeDataset(string $contents, string $extension = 'yaml'): string
 {
@@ -64,11 +67,31 @@ it('loads the same dataset from JSON', function (): void {
         ->and($dataset->control->driver)->toBeInstanceOf(EchoDriver::class);
 });
 
-it('resolves a recorded control relative to the dataset', function (): void {
-    $file = writeDataset(str_replace('{constant: "nothing", ceiling: 0.0}', '{recorded: recordings/bad.json}', MINIMAL));
+it('resolves a recorded control relative to the dataset and replays it', function (): void {
+    $file = writeDataset(str_replace('{constant: "nothing", ceiling: 0.0}', '{recorded: controls/bad.json}', MINIMAL));
+    Recording::write(dirname($file) . '/controls/bad.json', 'minimal', ['one' => new Response('a bad answer')]);
 
-    expect((new DatasetLoader())->load($file)->control->driver)->toBeInstanceOf(RecordedDriver::class);
+    $dataset = (new DatasetLoader())->load($file);
+
+    expect($dataset->control->driver)->toBeInstanceOf(RecordedDriver::class)
+        ->and($dataset->control->driver->respond($dataset->cases[0], $dataset)->text)->toBe('a bad answer');
 });
+
+it('rejects a recorded control that is missing, incomplete or outside the dataset directory', function (Closure $arrange, string $message): void {
+    $file = writeDataset(str_replace('{constant: "nothing", ceiling: 0.0}', '{recorded: controls/bad.json}', MINIMAL));
+    $arrange(dirname($file));
+
+    expect(fn() => (new DatasetLoader())->load($file))->toThrow(InvalidDataset::class, $message);
+})->with([
+    'missing' => [static fn(string $directory) => null, 'control.recorded names a recording that does not exist'],
+    'incomplete' => [static fn(string $directory) => Recording::write("{$directory}/controls/bad.json", 'minimal', []), 'control.recorded has no response for 1 case(s): one'],
+    'symlinked outside' => [static function (string $directory): void {
+        $outside = scratchDirectory() . '/bad.json';
+        Recording::write($outside, 'minimal', ['one' => new Response('x')]);
+        mkdir("{$directory}/controls");
+        symlink($outside, "{$directory}/controls/bad.json");
+    }, 'control.recorded resolves outside the dataset\'s directory'],
+]);
 
 it('rejects datasets with problems, naming the location', function (string $yaml, string $message): void {
     expect(fn() => (new DatasetLoader())->load(writeDataset($yaml)))->toThrow(InvalidDataset::class, $message);
@@ -97,6 +120,9 @@ it('rejects datasets with problems, naming the location', function (string $yaml
     'recorded control absolute' => [str_replace('{constant: "nothing", ceiling: 0.0}', '{recorded: /etc/passwd.json}', MINIMAL), 'control.recorded must be a relative path'],
     'top level list' => ['- one', 'must contain a map at the top level'],
     'invalid yaml' => ["name: [unclosed\n", 'is not valid YAML'],
+    'name with a trailing newline' => [str_replace('name: minimal', 'name: "minimal\\n"', MINIMAL), 'name must be lowercase'],
+    'case id with a trailing newline' => [str_replace('id: one', 'id: "one\\n"', MINIMAL), 'cases[0].id must be letters'],
+    'all-digit case id' => [str_replace('id: one', 'id: "123"', MINIMAL), 'and not only digits'],
     'php object tag' => [str_replace('input: Say hello.', 'input: !php/object \'O:8:"stdClass":0:{}\'', MINIMAL), 'is not valid YAML'],
 ]);
 
@@ -138,4 +164,40 @@ it('builds graders registered with extend', function (): void {
 
     expect($dataset->cases[0]->graders[0])->toBeInstanceOf(Contains::class)
         ->and(fn() => $factory->extend('Bad Name', static fn() => new Contains('x')))->toThrow(InvalidArgumentException::class);
+});
+
+it('never quotes the offending line of a YAML parse error', function (): void {
+    $yaml = str_replace('input: Say hello.', 'input: CANARY-INPUT-77aa: [unclosed', MINIMAL);
+
+    expect(fn() => (new DatasetLoader())->load(writeDataset($yaml)))
+        ->toThrow(function (InvalidDataset $e): void {
+            expect($e->getMessage())->toContain('is not valid YAML (parse error on line')
+                ->and($e->getMessage())->not->toContain('CANARY-INPUT-77aa');
+        });
+});
+
+it('strips control characters from keys it reports', function (): void {
+    $yaml = MINIMAL . "\n\"x\\e]0;PWNED\\a\\e[2J\": 1";
+
+    expect(fn() => (new DatasetLoader())->load(writeDataset($yaml)))
+        ->toThrow(function (InvalidDataset $e): void {
+            expect($e->getMessage())->toContain('is not a recognised key')
+                ->and($e->getMessage())->not->toContain("\e")
+                ->and($e->getMessage())->not->toContain("\x07");
+        });
+});
+
+it('rejects a YAML alias bomb before walking it', function (): void {
+    $levels = ['a: &a ["x", "x", "x", "x", "x", "x", "x", "x", "x", "x"]'];
+
+    foreach (range('b', 'g') as $index => $name) {
+        $previous = chr(ord('a') + $index);
+        $levels[] = "{$name}: &{$name} [" . implode(', ', array_fill(0, 10, "*{$previous}")) . ']';
+    }
+
+    $yaml = MINIMAL . "\ndescription: x\nanchors:\n  " . implode("\n  ", $levels);
+    $started = microtime(true);
+
+    expect(fn() => (new DatasetLoader())->load(writeDataset($yaml)))->toThrow(InvalidDataset::class, 'holds more than ' . Spec::MAX_NODES . ' values')
+        ->and(microtime(true) - $started)->toBeLessThan(2.0);
 });
