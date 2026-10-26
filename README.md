@@ -72,11 +72,17 @@ use OffsetSmoker\LlmEvals\Dataset\EvalCase;
 use OffsetSmoker\LlmEvals\Drivers\CallbackDriver;
 use OffsetSmoker\LlmEvals\Drivers\DriverRegistry;
 
-$this->app->make(DriverRegistry::class)->extend('notice-rewriter', fn () => new CallbackDriver(
+$this->callAfterResolving(DriverRegistry::class, fn (DriverRegistry $drivers) => $drivers->extend('notice-rewriter', fn () => new CallbackDriver(
     fn (EvalCase $case): string => $this->app->make(NoticeRewriter::class)->rewrite($case->input),
     'notice-rewriter',
-));
+)));
 ```
+
+Use `callAfterResolving()`, not `$this->app->make(DriverRegistry::class)`.
+The package is a dev dependency, so after `composer install --no-dev` its
+classes do not exist, and resolving one in `boot()` would break every
+request. The callback runs only when the registry is resolved, which happens
+only where the package is installed.
 
 ```bash
 php artisan evals:run --driver=notice-rewriter
@@ -207,7 +213,10 @@ its type key:
 use OffsetSmoker\LlmEvals\Graders\GraderFactory;
 use OffsetSmoker\LlmEvals\Support\Spec;
 
-$this->app->make(GraderFactory::class)->extend('mentions_township', fn (Spec $entry, string $type) => new MentionsTownship);
+$this->callAfterResolving(GraderFactory::class, fn (GraderFactory $graders) => $graders->extend(
+    'mentions_township',
+    fn (Spec $entry, string $type) => new MentionsTownship,
+));
 ```
 
 `MentionsTownship` implements `OffsetSmoker\LlmEvals\Graders\Grader`

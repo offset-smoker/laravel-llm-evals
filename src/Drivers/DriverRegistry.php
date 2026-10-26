@@ -9,12 +9,13 @@ use InvalidArgumentException;
 
 /**
  * Named driver factories. The service provider registers `claude` and
- * `recorded`; register your own feature in a service provider's `boot()`:
+ * `recorded`; register your own feature in a service provider's `boot()`,
+ * lazily, so an install without dev dependencies never touches this class:
  *
- *     $this->app->make(DriverRegistry::class)->extend('summarizer', fn () => new CallbackDriver(
+ *     $this->callAfterResolving(DriverRegistry::class, fn (DriverRegistry $drivers) => $drivers->extend('summarizer', fn () => new CallbackDriver(
  *         fn (EvalCase $case) => app(Summarizer::class)->summarize($case->input),
  *         'summarizer',
- *     ));
+ *     )));
  */
 final class DriverRegistry
 {
