@@ -30,3 +30,13 @@ First release.
   grader reasons never quote output; non-local JSON Schema references are
   rejected anywhere in a schema; `--record` keeps earlier responses for cases
   that error.
+- From a second review: the README registers drivers and graders with
+  `callAfterResolving()`, so a `--no-dev` deploy no longer breaks; JSON Schema
+  references are rejected under every keyword (draft-07 `dependencies`
+  included), a nested `$id` is rejected and the validator's non-standard
+  extension keywords are off; `--record` checks existing recordings and the
+  recordings directory before the subject runs; a dataset that stops with a
+  setup error no longer drops the other datasets or the JSON report (now
+  with an `errors` list); duplicate dataset names, `threshold: 0` and source
+  ids the default citation format cannot cite are rejected at load; CI
+  actions are pinned to commit SHAs, with Dependabot.

@@ -311,6 +311,14 @@ level `max` with `phpstan-strict-rules`, no baseline and no ignored errors.
 CI runs all of it on PHP 8.3 and 8.4, on Laravel 12 and 13, with the highest
 and the lowest allowed dependencies.
 
+Three dev requirements exist only to set floors for that lowest-dependencies
+run; nothing in `src/` or `tests/` uses them. `open-telemetry/api` and
+`open-telemetry/context` (pulled in by the Anthropic SDK) are held at 1.1 or
+later because 1.0 raises PHP 8.4 deprecations, and `paragonie/random_compat`
+is held at 9.99, the empty release, because the 2.x polyfill (allowed by
+`symfony/polyfill-uuid`) declares a `random_bytes()` with no return type,
+which Larastan then reports in `src/`.
+
 ## Status and limitations
 
 Version 0.1.0. The core is complete and tested, but it is new, so expect the
