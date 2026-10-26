@@ -20,7 +20,9 @@ function readmeRegistrationExamples(): array
 
 /**
  * Boots a bare Laravel application in a separate PHP process whose
- * AppServiceProvider::boot() runs $code.
+ * AppServiceProvider::boot() runs $code. PHP notices go to stderr, so a
+ * deprecation in a dependency (as with the lowest allowed versions) cannot
+ * corrupt the JSON result on stdout.
  *
  * @return array{booted: bool, error?: string, drivers?: list<string>, graders?: list<string>}
  */
@@ -30,7 +32,7 @@ function bootApplicationWith(string $code, string $mode): array
     $file = "{$basePath}/snippet.php";
     file_put_contents($file, "<?php\n" . $code);
 
-    $process = new Process([PHP_BINARY, __DIR__ . '/../Fixtures/readme/boot-app.php', $file, $mode, $basePath]);
+    $process = new Process([PHP_BINARY, '-d', 'display_errors=stderr', __DIR__ . '/../Fixtures/readme/boot-app.php', $file, $mode, $basePath]);
     $process->mustRun();
 
     /** @var array{booted: bool, error?: string, drivers?: list<string>, graders?: list<string>} */
