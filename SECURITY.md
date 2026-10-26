@@ -23,10 +23,12 @@ your own requirements. It is not a guarantee about your deployment.
   which the published config fills from `ANTHROPIC_API_KEY`). The package
   never writes a key to output, reports, recordings or exceptions.
 - **Prompts are never logged.** The package has no logging calls at all, and
-  an architecture test fails the build if one is added (logger, `Log`,
-  `error_log`, `syslog`, `trigger_error`, writes to streams). Console and JSON
-  reports name cases by id and never include case inputs or the system
-  prompt.
+  architecture tests fail the build if one is added: a logger, `Log`,
+  `error_log`, `syslog`, `trigger_error`, `fopen`, `fwrite`, `fputs`, the
+  `printf` family, `echo`, `print`, inline output, or any `php://` stream
+  name in `src/`. All console output goes through the Symfony console output
+  of `evals:run`. Console and JSON reports name cases by id and never include
+  case inputs or the system prompt.
 - **Model outputs** appear in reports only with `--with-outputs`, and in
   recording files only with `--record`. Both are opt-in, because outputs can
   repeat what was in the prompt. Treat recordings like any other test fixture
