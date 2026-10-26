@@ -10,6 +10,7 @@ use Anthropic\Core\Exceptions\APIStatusException;
 use Anthropic\Messages\OutputConfig\Effort;
 use Anthropic\Messages\TextBlock;
 use InvalidArgumentException;
+use JsonException;
 use OffsetSmoker\LlmEvals\Dataset\Dataset;
 use OffsetSmoker\LlmEvals\Dataset\EvalCase;
 
@@ -78,6 +79,13 @@ final readonly class ClaudeDriver implements Driver
             throw new DriverFailed("Claude returned HTTP {$e->status}{$type} for case \"{$case->id}\"{$suffix}.");
         } catch (APIException) {
             throw new DriverFailed("Could not reach the Claude API for case \"{$case->id}\".");
+        } catch (JsonException) {
+            throw new DriverFailed("Claude returned a response that is not valid JSON for case \"{$case->id}\".");
+        }
+
+        // The SDK leaves required properties uninitialised when a response omits them.
+        if (! isset($message->content, $message->usage)) {
+            throw new DriverFailed("Claude returned an incomplete message for case \"{$case->id}\".");
         }
 
         $text = '';

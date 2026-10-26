@@ -88,7 +88,7 @@ final class Recording
     {
         $directory = dirname($file);
 
-        if (! is_dir($directory) && ! mkdir($directory, 0o755, true) && ! is_dir($directory)) {
+        if (! is_dir($directory) && ! self::quietly(static fn(): bool => mkdir($directory, 0o755, true)) && ! is_dir($directory)) {
             throw new RuntimeException("Could not create the recordings directory {$directory}.");
         }
 
@@ -113,12 +113,31 @@ final class Recording
 
         $temporary = $file . '.' . bin2hex(random_bytes(6)) . '.tmp';
 
-        if (file_put_contents($temporary, $json . "\n") === false || ! rename($temporary, $file)) {
+        $written = self::quietly(static fn(): bool => file_put_contents($temporary, $json . "\n") !== false && rename($temporary, $file));
+
+        if (! $written) {
             if (is_file($temporary)) {
                 unlink($temporary);
             }
 
             throw new RuntimeException("Could not write the recording {$file}.");
+        }
+    }
+
+    /**
+     * Runs a filesystem call with PHP warnings silenced, so a failure is
+     * reported by the return value and the caller's own message.
+     *
+     * @param  callable(): bool  $operation
+     */
+    private static function quietly(callable $operation): bool
+    {
+        set_error_handler(static fn(): bool => true);
+
+        try {
+            return $operation();
+        } finally {
+            restore_error_handler();
         }
     }
 }

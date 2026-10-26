@@ -53,15 +53,15 @@ final class RunEvalsCommand extends Command
         foreach ($datasets as $dataset) {
             try {
                 $report = $runner->run($dataset, $subject);
-            } catch (InvalidDataset $e) {
+                ConsoleReport::render($report, $this->output, (bool) $this->option('with-outputs'));
+                $reports[] = $report;
+
+                if ($this->option('record') === true && $report->subject !== null) {
+                    $this->record($config, $dataset, $report);
+                }
+            } catch (RuntimeException $e) {
+                // A missing recording, an unwritable recordings directory: a setup problem, never a score.
                 return $this->invalid($e->getMessage());
-            }
-
-            ConsoleReport::render($report, $this->output, (bool) $this->option('with-outputs'));
-            $reports[] = $report;
-
-            if ($this->option('record') === true && $report->subject !== null) {
-                $this->record($config, $dataset, $report);
             }
         }
 
@@ -72,7 +72,11 @@ final class RunEvalsCommand extends Command
         }
 
         if ($jsonFile !== null) {
-            $this->writeJson($jsonFile, $reports, $exitCode);
+            try {
+                $this->writeJson($jsonFile, $reports, $exitCode);
+            } catch (RuntimeException $e) {
+                return $this->invalid($e->getMessage());
+            }
         }
 
         $this->newLine();
@@ -102,7 +106,7 @@ final class RunEvalsCommand extends Command
             // Three globs rather than GLOB_BRACE, which musl-based images (Alpine) lack.
             foreach (['json', 'yaml', 'yml'] as $extension) {
                 $matches = glob($base . DIRECTORY_SEPARATOR . '*.' . $extension);
-                $files = [...$files, ...($matches === false ? [] : $matches)];
+                $files = [...$files, ...array_filter($matches === false ? [] : $matches, is_file(...))];
             }
 
             sort($files);
@@ -211,7 +215,15 @@ final class RunEvalsCommand extends Command
             throw new RuntimeException("Could not encode the JSON report: {$e->getMessage()}");
         }
 
-        if (file_put_contents($file, $json . "\n") === false) {
+        set_error_handler(static fn(): bool => true);
+
+        try {
+            $written = file_put_contents($file, $json . "\n");
+        } finally {
+            restore_error_handler();
+        }
+
+        if ($written === false) {
             throw new RuntimeException("Could not write the JSON report to {$file}.");
         }
     }

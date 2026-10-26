@@ -276,3 +276,23 @@ it('merges the package config and publishes it', function (): void {
     expect(config_path('llm-evals.php'))->toBeFile();
     unlink(config_path('llm-evals.php'));
 });
+
+it('exits 3 rather than 1 when a recording cannot be written', function (): void {
+    useExampleDatasets();
+    config()->set('llm-evals.recordings_path', '/dev/null/recordings');
+    registerSubject(static fn(): string => 'Elm Street');
+
+    [$exitCode, $output] = runEvals(['--driver' => 'subject', '--record' => true]);
+
+    expect($exitCode)->toBe(3)->and($output)->toContain('Could not create the recordings directory');
+});
+
+it('exits 3 when the JSON report cannot be written', function (): void {
+    $directory = useExampleDatasets();
+    mkdir("{$directory}/report.json");
+
+    // The directory named like a dataset is skipped, and cannot be written as a report.
+    [$exitCode, $output] = runEvals(['--json' => "{$directory}/report.json"]);
+
+    expect($exitCode)->toBe(3)->and($output)->toContain('Could not write the JSON report');
+});

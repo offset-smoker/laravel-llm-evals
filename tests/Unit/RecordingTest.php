@@ -79,3 +79,9 @@ it('can be used as a closure-free fake for any case', function (): void {
 
     expect(RecordedDriver::fromFile($file)->respond($case, makeDataset([$case]))->text)->toBe('x');
 });
+
+it('refuses a dataset name that is not a safe file name', function (): void {
+    $dataset = new OffsetSmoker\LlmEvals\Dataset\Dataset('../escape', 1.0, null, makeDataset([evalCase()])->control, [evalCase()], '/dev/null');
+
+    RecordedDriver::fromDirectory(scratchDirectory())->respond(evalCase(), $dataset);
+})->throws(DriverFailed::class, 'not a safe recording file name');

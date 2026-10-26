@@ -113,3 +113,13 @@ it('validates its configuration', function (string $model, int $maxTokens, ?stri
 it('accepts the current model ids', function (string $model): void {
     expect((new ClaudeDriver(claudeClient(new FakeTransport()), $model))->name())->toBe("claude:{$model}");
 })->with(['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']);
+
+it('reports a malformed or incomplete API response as a failed case', function (string $fixture, string $message): void {
+    $transport = (new FakeTransport())->replay($fixture);
+
+    expect(fn() => (new ClaudeDriver(claudeClient($transport)))->respond(notices(), makeDataset([notices()])))
+        ->toThrow(DriverFailed::class, $message);
+})->with([
+    'not JSON' => ['malformed-body.txt', 'Claude returned a response that is not valid JSON for case "water-main".'],
+    'missing content and usage' => ['incomplete-message.json', 'Claude returned an incomplete message for case "water-main".'],
+]);

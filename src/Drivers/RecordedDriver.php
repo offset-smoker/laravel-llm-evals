@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace OffsetSmoker\LlmEvals\Drivers;
 
 use OffsetSmoker\LlmEvals\Dataset\Dataset;
+use OffsetSmoker\LlmEvals\Dataset\DatasetLoader;
 use OffsetSmoker\LlmEvals\Dataset\EvalCase;
 
 /**
@@ -44,6 +45,10 @@ final class RecordedDriver implements Driver
 
     public function respond(EvalCase $case, Dataset $dataset): Response
     {
+        if ($this->file === null && preg_match(DatasetLoader::NAME_PATTERN, $dataset->name) !== 1) {
+            throw new DriverFailed('The dataset name is not a safe recording file name.');
+        }
+
         $file = $this->file ?? $this->directory . DIRECTORY_SEPARATOR . $dataset->name . '.json';
 
         $this->loaded[$file] ??= Recording::read($file, $dataset->name);
