@@ -13,6 +13,7 @@ use InvalidArgumentException;
 use JsonException;
 use OffsetSmoker\LlmEvals\Dataset\Dataset;
 use OffsetSmoker\LlmEvals\Dataset\EvalCase;
+use Throwable;
 
 /**
  * Sends each case to Claude through the official Anthropic PHP SDK.
@@ -81,8 +82,14 @@ final readonly class ClaudeDriver implements Driver
             throw new DriverFailed("Claude returned HTTP {$e->status}{$type} for case \"{$case->id}\"{$suffix}.");
         } catch (APIException) {
             throw new DriverFailed("Could not reach the Claude API for case \"{$case->id}\".");
-        } catch (JsonException) {
-            throw new DriverFailed("Claude returned a response that is not valid JSON for case \"{$case->id}\".");
+        } catch (Throwable $e) {
+            // The SDK throws a bare JsonException for a body that is not JSON; it declares no @throws for it,
+            // so it is matched here rather than in its own catch, which PHPStan reads differently per PHP version.
+            if ($e instanceof JsonException) {
+                throw new DriverFailed("Claude returned a response that is not valid JSON for case \"{$case->id}\".");
+            }
+
+            throw $e;
         }
 
         // The SDK leaves required properties uninitialised when a response omits them.
