@@ -301,11 +301,14 @@ vendor/bin/phpstan analyse
 vendor/bin/pint --test
 ```
 
-The suite has 192 tests: unit tests for every grader, the dataset loader, the
+The suite has 213 tests: unit tests for every grader, the dataset loader, the
 runner, recordings and the Claude driver; feature tests for `evals:run` and
 the Pest expectations on Orchestra Testbench; and architecture tests,
-including one that fails if anything in `src/` logs. The Claude driver's
-tests go through the real SDK, with a PSR-18 client that replays recorded
+including one that fails if anything in `src/` logs or writes to output and
+one that fails if a CI action is not pinned to a commit SHA. A feature test
+boots a bare Laravel app with each README registration example, with the
+package installed and with its classes missing, as after
+`composer install --no-dev`. The Claude driver's tests go through the real SDK, with a PSR-18 client that replays recorded
 Messages API responses, so no test touches the network. Larastan runs at
 level `max` with `phpstan-strict-rules`, no baseline and no ignored errors.
 CI runs all of it on PHP 8.3 and 8.4, on Laravel 12 and 13, with the highest
